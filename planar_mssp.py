@@ -9,6 +9,8 @@ class PlanarMSSPDataStructure:
         self.s_maps = {}      
         self.delta_maps = {}  
         self.tree_distances = {}
+        
+        self.interval_graphs = {}
         self.build_log = []
         
         full_interval = (0, len(V_infinity) - 1)
@@ -24,14 +26,28 @@ class PlanarMSSPDataStructure:
         tree_edges = set()
         parent_map = {}
         for target, path in paths.items():
+            if lengths[target] == float('inf'):
+                continue
+                
             if len(path) > 1:
-                u, v = path[-2], path[-1]
+                u = path[-2]
+                v = path[-1]
                 tree_edges.add((u, v))
                 parent_map[v] = u
         return tree_edges, parent_map, lengths
 
     def _mssp(self, interval, H_I):
         i1, i2 = interval
+        
+        # 1. FIX: Dynamically filter inactive halo nodes for this specific subgraph interval
+        active_halo_nodes = set(self.V_infinity[k] for k in range(i1, i2 + 1))
+        inactive_halo_nodes = self.V_inf_set - active_halo_nodes
+        
+        valid_nodes = [n for n in H_I.nodes() if n not in inactive_halo_nodes]
+        H_I = H_I.subgraph(valid_nodes).copy()
+        
+        self.interval_graphs[interval] = (list(H_I.nodes()), list(H_I.edges(data=True)))
+        
         i = (i1 + i2) // 2
         roots = list(set([self.V_infinity[i1], self.V_infinity[i2], self.V_infinity[i]]))
         sssp_trees = {}
@@ -120,21 +136,32 @@ class PlanarMSSPDataStructure:
         edges_to_add, edges_to_remove = [], []
         for u in t_nodes:
             if u not in H_J: continue
+            
             for _, v, data in H_J.out_edges(u, data=True):
                 if v not in t_nodes:
                     edges_to_add.append((s, v, data.get('weight', 1) + delta_map_J.get(u, 0)))
                     edges_to_remove.append((u, v))
+                    
             for v, _, data in H_J.in_edges(u, data=True):
                 if v not in t_nodes and u != s:
                     edges_to_remove.append((v, u))
+                    
+                    # 2. FIX: Zero-weight preservation. If the inward edge is from a halo node,
+                    # re-route to supernode 's' with weight 0 to prevent graph isolation. 
+                    if v in self.V_inf_set:
+                        edges_to_add.append((v, s, 0))
+                    else:
+                        edges_to_add.append((v, s, float('inf')))
 
         H_J.remove_edges_from(edges_to_remove)
+        
         for u, v, w in edges_to_add:
             if H_J.has_edge(u, v): H_J[u][v]['weight'] = min(H_J[u][v]['weight'], w)
             else: H_J.add_edge(u, v, weight=w)
                 
         for u in t_nodes:
             if u != s and u in H_J: H_J.remove_node(u) 
+            
         return H_J
 
     def query(self, u, j_index, interval=(0, None), log=None, current_delta=0, chain=None):
@@ -151,14 +178,13 @@ class PlanarMSSPDataStructure:
             dist = self.tree_distances.get((interval, r_node), {}).get(u, float('inf'))
             if log is not None: 
                 log.append({"type": "base_case", "interval": interval, "node": u, "found_dist": dist, "total": current_delta + dist})
-            return dist
+            return dist + current_delta
 
         i = (i1 + i2) // 2
         active_J = (i1, i) if j_index <= i else (i, i2)
         mapped_s = self.s_maps.get(active_J, {}).get(u, u)
         delta_val = self.delta_maps.get(active_J, {}).get(u, 0)
         
-        # Track the nested hierarchy of targets
         new_chain = list(chain)
         if mapped_s != u:
             new_chain.append(mapped_s)

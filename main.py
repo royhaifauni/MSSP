@@ -40,14 +40,41 @@ def main():
         current_time = pygame.time.get_ticks()
 
         for event in pygame.event.get():
-            if event.type == pygame.QUIT: running = False
+            if event.type == pygame.QUIT: 
+                running = False
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-                if state == "ANIMATE_PREPARE": prep_idx = len(V_infinity) * 2
-                elif state == "ANIMATE_BUILD": advance_build_step = True 
-                elif state == "ANIMATE_QUERY": advance_query_step = True
+                if state == "ANIMATE_PREPARE": 
+                    n = len(V_infinity)
+                    while prep_idx < 2 * n:
+                        if prep_idx < n:
+                            G.add_node(V_infinity[prep_idx])
+                            G.add_edge(V_infinity[prep_idx], boundary_nodes[prep_idx], weight=0)
+                        else:
+                            G.add_edge(V_infinity[prep_idx - n], V_infinity[(prep_idx - n + 1) % n], weight=float('inf'))
+                        prep_idx += 1
+                    current_H_nodes = list(G.nodes())
+                    current_H_edges = list(G.edges(data=True))
+                elif state == "ANIMATE_BUILD": 
+                    advance_build_step = True 
+                elif state == "ANIMATE_QUERY": 
+                    advance_query_step = True
+                elif state == "SHOW_PATH":
+                    # Flawless reset via SPACE for unlimited subsequent queries
+                    state = "WAIT_START"
+                    start_node, target_node = None, None
+                    active_interval, active_u = None, None
+                    shortest_path, query_log = [], []
+                    panel_text = ["--- AWAITING INPUT ---", "Select a green boundary node."]
+                    current_H_nodes = list(G.nodes())
+                    current_H_edges = list(G.edges(data=True))
+                    advance_query_step = False 
+                    
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_x, mouse_y = event.pos
-                if state in ["ANIMATE_PREPARE", "BUILD_BACKEND", "ANIMATE_BUILD", "ANIMATE_QUERY"]: continue
+                
+                # Ignore clicks unless we are explicitly waiting for node selection
+                if state in ["ANIMATE_PREPARE", "BUILD_BACKEND", "ANIMATE_BUILD", "ANIMATE_QUERY", "SHOW_PATH"]: 
+                    continue
                     
                 clicked_node = None
                 for node, (nx_x, nx_y) in pos.items():
@@ -65,17 +92,16 @@ def main():
                         target_node = clicked_node
                         query_log = []
                         final_distance = mssp.query(target_node, V_infinity.index(start_node), log=query_log)
-                        try: shortest_path = nx.shortest_path(G, source=start_node, target=target_node, weight='weight')
-                        except nx.NetworkXNoPath: shortest_path = []
+                        try: 
+                            shortest_path = nx.shortest_path(G, source=start_node, target=target_node, weight='weight')
+                        except nx.NetworkXNoPath: 
+                            shortest_path = []
                         
                         anim_idx = -1
                         panel_text = ["--- EXECUTING QUERY ---", f"Start: {start_node}", f"Target: {target_node}", "Press SPACE to trace."]
                         state = "ANIMATE_QUERY"
-                        current_H_nodes, current_H_edges = list(G.nodes()), list(G.edges(data=True))
-                elif state == "SHOW_PATH":
-                    state, start_node, target_node, active_interval = "WAIT_START", None, None, None
-                    panel_text = ["--- AWAITING INPUT ---", "Select a green boundary node."]
-                    current_H_nodes, current_H_edges = list(G.nodes()), list(G.edges(data=True))
+                        current_H_nodes = list(G.nodes())
+                        current_H_edges = list(G.edges(data=True))
 
         active_edges, active_eshared, active_nodes = [], [], []
         active_root = None
@@ -91,7 +117,8 @@ def main():
                     G.add_edge(V_infinity[prep_idx - n], V_infinity[(prep_idx - n + 1) % n], weight=float('inf'))
                 else:
                     state = "BUILD_BACKEND"
-                    current_H_nodes, current_H_edges = list(G.nodes()), list(G.edges(data=True))
+                    current_H_nodes = list(G.nodes())
+                    current_H_edges = list(G.edges(data=True))
                 prep_idx += 1
                 last_anim_time = current_time
 
@@ -111,26 +138,30 @@ def main():
                     
                     if "H_nodes" in step:
                         current_H_nodes, current_H_edges = step["H_nodes"], step["H_edges"]
-                    if step.get("interval"): active_interval = step["interval"]
+                    if step.get("interval"): 
+                        active_interval = step["interval"]
                     
                     active_step_type = step.get("type")
                     if active_step_type == "info": panel_text.append(step["msg"])
                     elif active_step_type == "sssp": panel_text.append(f"Int {active_interval}: SSSP from {step['root']}")
                     elif active_step_type == "eshared": panel_text.append(f"Int {active_interval}: Highlighting E_shared (Magenta)")
-                    elif active_step_type == "contract_target": panel_text.append(f"Int {active_interval}: Target T({step['s']}) (Purple)")
+                    elif active_step_type in ["contract_target", "contract"]: panel_text.append(f"Int {active_interval}: Target T({step['s']}) (Purple)")
                     elif active_step_type == "contract_done": panel_text.append(f"Int {active_interval}: Absorbed into {step['s']}")
                 else:
-                    state, active_interval, active_step_type = "WAIT_START", None, None
+                    state = "WAIT_START"
+                    active_interval, active_step_type = None, None
                     panel_text = ["--- PREPROCESSING COMPLETE ---", "Click a green boundary node."]
-                    current_H_nodes, current_H_edges = list(G.nodes()), list(G.edges(data=True))
+                    current_H_nodes = list(G.nodes())
+                    current_H_edges = list(G.edges(data=True))
 
             if anim_idx < len(mssp.build_log):
                 step = mssp.build_log[anim_idx]
-                if "interval" in step: current_interval_nodes = [V_infinity[k] for k in range(step["interval"][0], step["interval"][1] + 1)]
+                if "interval" in step: 
+                    current_interval_nodes = [V_infinity[k] for k in range(step["interval"][0], step["interval"][1] + 1)]
                 
                 if step.get("type") == "sssp": active_edges, active_root = step["edges"], step["root"]
                 elif step.get("type") == "eshared": active_eshared = step["edges"]
-                elif step.get("type") == "contract_target": active_nodes, active_root = step["nodes"], step["s"]
+                elif step.get("type") in ["contract_target", "contract"]: active_nodes, active_root = step["nodes"], step["s"]
                 elif step.get("type") == "contract_done": active_nodes, active_root = [], step["s"]
 
         elif state == "ANIMATE_QUERY":
@@ -144,27 +175,36 @@ def main():
                         panel_text.append(f"Start Int: {active_interval}")
                     elif step["type"] == "lookup":
                         active_interval, active_u = step["interval"], step["original_u"]
-                        
-                        # --- TEXT FIX HERE ---
-                        chain_str = " -> ".join(map(str, step["chain"]))
-                        panel_text.append(f"Drop to {active_interval} | Total delta={step['delta']}")
-                        # ---------------------
-                        
+                        chain_str = " -> ".join(map(str, step.get("chain", [step["original_u"], step["mapped_s"]])))
+                        panel_text.append(f"Drop to {active_interval} | Total delta={step.get('delta', 0)}")
                         panel_text.append(f"  Target: {chain_str}")
                     elif step["type"] == "base_case":
                         active_interval, active_u = step["interval"], None
-                        panel_text.append(f"Base case {active_interval}! Dist to {step['node']}: {step['found_dist']}")
+                        
+                        # Prevent the double-print bug by verifying we haven't already appended it
+                        new_text = f"Base case {active_interval}! Dist to {step['node']}: {step['found_dist']}"
+                        if panel_text[-1] != new_text:
+                            panel_text.append(new_text)
                 else:
                     if not panel_text[-1].startswith("TOTAL"):
                         panel_text.append(f"TOTAL DISTANCE: {final_distance}")
                     state = "SHOW_PATH"
+                    
+                    # Restore the un-contracted graph so the orange path renders correctly
+                    current_H_nodes = list(G.nodes())
+                    current_H_edges = list(G.edges(data=True))
                 
-            if 0 <= anim_idx < len(query_log):
+            if state == "ANIMATE_QUERY" and 0 <= anim_idx < len(query_log):
                 step = query_log[anim_idx]
                 if step["type"] == "lookup":
                     active_nodes = [step["original_u"], step["mapped_s"]]
                 if step.get("interval"):
                     active_interval = step["interval"]
+                    
+                    # Apply graph shrinking during trace
+                    if active_interval in mssp.interval_graphs:
+                        current_H_nodes = mssp.interval_graphs[active_interval][0]
+                        current_H_edges = mssp.interval_graphs[active_interval][1]
 
         # --- DRAWING ---
         for u, v, data in current_H_edges:
